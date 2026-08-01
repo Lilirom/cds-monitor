@@ -55,6 +55,47 @@ C_CLEARED = "Cleared"
 # name, senior. Baskets, tranches and total-return swaps are out of scope.
 SINGLE_NAME_FISN = re.compile(r"CDS (?:Corp|Sov) SN", re.I)
 
+
+def classify(fisn: str) -> str | None:
+    """
+    Map UPI FISN to a product family. Returns None for rows that do not belong
+    in a credit monitor at all (a handful of rate swaps land in the credits
+    file each month, presumably mis-tagged at source).
+
+    FISN reads as: NA / <instrument> <type> <underlying> <settlement>.
+    'Cs' and 'Ph' are cash and physical settlement.
+    """
+    f = str(fisn or "")
+    if not f:
+        return None
+    if f.startswith(("NA/Rt ", "NA/Ot Sw", "NA/Swaps", "NA/Oth Oth")):
+        return None                                   # not credit
+    if re.search(r"CDS (?:Corp|Sov|Mun) SN", f, re.I):
+        return "single_name"                          # the core product
+    if re.search(r"CDS \w+ Idx", f, re.I):
+        return "index"
+    if re.search(r"Basket|Bskt", f, re.I):
+        return "basket"                               # incl. loan/CLO baskets
+    if re.search(r"TRtn", f, re.I):
+        return "trs"                                  # total return swaps
+    if re.search(r"CDS \w+ Oth", f, re.I):
+        return "structured"                           # ABS/CMBS/tranche refs
+    if f.startswith("NA/Cr Sw"):
+        return "other_credit"                         # incl. loan-linked swaps
+    if f.startswith("NA/Ot Ot"):
+        return "other_credit"
+    return "other_credit"
+
+
+FAMILY_LABEL = {
+    "single_name": "Single name",
+    "index":       "Index",
+    "basket":      "Baskets & CLO",
+    "trs":         "Total return",
+    "structured":  "Structured ref",
+    "other_credit": "Other credit",
+}
+
 SENIORITY = {"SR": "senior", "SUB": "sub", "MZ": "mezz", "JR": "junior"}
 
 # UPI Underlier Name frequently holds a bond descriptor rather than an issuer.
@@ -87,7 +128,7 @@ RETAIN_DAYS = 90               # rolling history kept for baselines
 # The cache holds POST-normalisation rows, so any change to the name filters or
 # field mapping makes older cached days stale. Bump this and the next run
 # rebuilds them instead of silently serving results from the previous logic.
-NORMALISER_VERSION = 2
+NORMALISER_VERSION = 6
 
 
 def state_path(day: date) -> Path:
@@ -216,6 +257,11 @@ def clean_display(v: str) -> str:
 
 
 def best_name(row) -> str:
+    """See _best_name_impl; kept as the public entry point."""
+    return _best_name_impl(row)
+
+
+def _best_name_impl(row) -> str:
     """
     Extract an issuer name, or "" if the file only offers a bond/contract
     descriptor. NaN must be tested with pd.isna - a float NaN is truthy, so
@@ -234,6 +280,17 @@ def best_name(row) -> str:
         if any(p.search(v) for p in DESCRIPTOR_PATTERNS):
             continue
         return clean_display(v)
+
+    # Structured and TRS rows often carry no issuer at all - the reference is a
+    # deal or a bespoke portfolio. Fall back to the trimmed identifier so the
+    # row stays countable and visibly unnamed rather than merging into a blank.
+    uid = row.get(C_UID)
+    if uid is not None and not pd.isna(uid):
+        u = str(uid).strip().split(";")[0][:20]
+        if u:
+            # Marked so consolidate_entities can still try the corpus-wide
+            # identifier map first; only genuinely unresolvable rows keep it.
+            return f"\x00[{u}]"
     return ""
 
 
@@ -271,7 +328,9 @@ def normalise(raw: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise KeyError(f"schema drift - absent columns: {sorted(missing)}")
 
-    df = raw[raw[C_FISN].fillna("").str.contains(SINGLE_NAME_FISN)].copy()
+    fam = raw[C_FISN].map(classify)
+    df = raw[fam.notna()].copy()
+    df["_family"] = fam[fam.notna()]
 
     out = pd.DataFrame(index=df.index)
     out["diss_id"] = df[C_DISS].astype(str).str.strip()
@@ -288,9 +347,12 @@ def normalise(raw: pd.DataFrame) -> pd.DataFrame:
     out["uid"] = df[C_UID].fillna("").astype(str).str.strip()
     out["uid_src"] = df[C_UID_SRC].fillna("").astype(str).str.strip()
     out["raw_name"] = df.apply(best_name, axis=1)
+    out["family"] = df["_family"]
+    out["fisn"] = df[C_FISN].fillna("")
     out["seniority"] = df[C_FISN].map(seniority_of)
     out["sector"] = [
-        "sovereign" if "SOV" in str(f).upper() else "corporate" for f in df[C_FISN]
+        "sovereign" if re.search(r"\bSov\b", str(f), re.I) else "corporate"
+        for f in df[C_FISN]
     ]
     out["tenor"] = [tenor_bucket(a, b) for a, b in zip(df[C_EXEC], df[C_EXPIRY])]
 
@@ -347,10 +409,12 @@ def resolve_lineage(combined: pd.DataFrame) -> pd.DataFrame:
     origins = (
         combined[combined["action"] == "NEWT"]
         .drop_duplicates(subset="lineage_id", keep="first")
-        .set_index("lineage_id")[["action", "event", "trade_date", "raw_name", "uid"]]
+        .set_index("lineage_id")[
+            ["action", "event", "trade_date", "raw_name", "uid", "family"]
+        ]
     )
     keep = combined.drop_duplicates(subset="lineage_id", keep="last").set_index("lineage_id")
-    for col in ("action", "event", "trade_date", "raw_name", "uid"):
+    for col in ("action", "event", "trade_date", "raw_name", "uid", "family"):
         inh = origins[col].reindex(keep.index)
         keep[col] = inh.where(inh.notna() & (inh != ""), keep[col])
     return keep.reset_index()
@@ -366,21 +430,33 @@ def consolidate_entities(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["key"] = df["raw_name"].map(entity_key)
 
-    named = df[df["key"] != ""]
+    # Provisional identifier labels must not seed the id -> name map.
+    provisional = df["raw_name"].str.startswith("\x00")
+    df.loc[provisional, "key"] = ""
+    named = df[(df["key"] != "") & ~provisional]
+    # Resolve identifiers within a family only. The same ISIN can back both a
+    # single-name CDS and a total return swap, and merging those would put two
+    # different products on one row.
     id_to_key = (
         named[named["uid"] != ""]
-        .groupby("uid")["key"]
+        .groupby(["family", "uid"])["key"]
         .agg(lambda s: s.value_counts().index[0])
         .to_dict()
     )
     blank = df["key"] == ""
-    df.loc[blank, "key"] = df.loc[blank, "uid"].map(id_to_key).fillna("")
+    df.loc[blank, "key"] = [
+        id_to_key.get((f, u), "")
+        for f, u in zip(df.loc[blank, "family"], df.loc[blank, "uid"])
+    ]
 
     # Rows still unidentified fall back to their raw identifier so they remain
     # visible as unmapped rather than being silently dropped.
     still = df["key"] == ""
     df.loc[still, "key"] = "UNMAPPED:" + df.loc[still, "uid"].replace("", "UNKNOWN")
+    df["raw_name"] = df["raw_name"].str.replace("\x00", "", regex=False)
 
+    df["key"] = df["family"] + "|" + df["key"]
+    named = df[~df["key"].str.endswith("|")]
     display = (
         named.groupby("key")["raw_name"]
         .agg(lambda s: s.value_counts().index[0])
@@ -406,8 +482,8 @@ def new_trades(df: pd.DataFrame) -> pd.DataFrame:
 def export(df: pd.DataFrame, dates: list[str]) -> dict:
     """
     Emit every (entity, date) cell so the front-end can select any date and
-    recompute baselines itself. Baselines are deliberately NOT precomputed:
-    the denominator depends on which date you are standing on.
+    recompute baselines itself. Entities are keyed by family, so a name that
+    trades as both a single-name CDS and a TRS appears once per product.
     """
     trades = new_trades(df)
     trades = trades[trades["trade_date"].isin(dates)]
@@ -416,9 +492,13 @@ def export(df: pd.DataFrame, dates: list[str]) -> dict:
         trades.groupby("key")
         .agg(
             name=("display_name", lambda s: s.value_counts().index[0]),
+            family=("family", lambda s: s.value_counts().index[0]),
             sector=("sector", lambda s: s.value_counts().index[0]),
             seniority=("seniority", lambda s: s.value_counts().index[0]),
-            unmapped=("key", lambda s: str(s.iat[0]).startswith("UNMAPPED:")),
+            # An entity labelled only by its identifier is unresolved in
+            # substance, whether or not it reached the UNMAPPED fallback.
+            unmapped=("display_name",
+                      lambda s: str(s.iat[0]).startswith("[") or "UNMAPPED:" in str(s.iat[0])),
             total=("key", "size"),
         )
     )
@@ -428,21 +508,24 @@ def export(df: pd.DataFrame, dates: list[str]) -> dict:
     for (k, d), g in trades.groupby(["key", "trade_date"]):
         sp = g["spread_bp"].dropna()
         notl = g.loc[g["notional"].notna()]
-        cells.setdefault(k, {})[di[d]] = [
-            int(len(g)),                                        # 0 count
-            round(float(g["capped"].mean()), 2),                # 1 capped share
-            round(float(sp.median()), 1) if len(sp) else None,  # 2 median spread bp
-            int((g["event"] == "NOVA").sum()),                  # 3 novations
-            {c: int(round(v / 1e6)) for c, v in
-             notl.groupby("ccy")["notional"].sum().items() if c},  # 4 notional floor, m
-            g["tenor"].value_counts().to_dict(),                # 5 tenors
+        top = notl.groupby("ccy")["notional"].sum()
+        top = top[top.index != ""]
+        cell = [
+            int(len(g)),
+            round(float(g["capped"].mean()), 2),
+            round(float(sp.median()), 1) if len(sp) else None,
+            int((g["event"] == "NOVA").sum()),
         ]
+        if len(top):
+            c = top.idxmax()
+            cell.append([c, int(round(top.max() / 1e6))])
+        cells.setdefault(k, {})[di[d]] = cell
 
     entities = []
     for k, m in meta.iterrows():
         entities.append({
-            "k": k,
             "n": str(m["name"])[:44],
+            "f": m["family"],
             "sec": m["sector"],
             "sen": m["seniority"],
             "u": bool(m["unmapped"]),
@@ -454,20 +537,24 @@ def export(df: pd.DataFrame, dates: list[str]) -> dict:
     totals = {}
     for d in dates:
         g = trades[trades["trade_date"] == d]
+        by_fam = g.groupby("family").size().to_dict()
         totals[d] = {
             "trades": int(len(g)),
             "names": int(g["key"].nunique()),
             "capped": round(float(g["capped"].mean()), 2) if len(g) else 0,
             "sov": int((g["sector"] == "sovereign").sum()),
-            "unmapped": int(g["key"].astype(str).str.startswith("UNMAPPED:").sum()),
+            "unmapped": int(g["key"].astype(str).str.contains("UNMAPPED:").sum()),
+            "fam": {k: int(v) for k, v in by_fam.items()},
         }
 
     return {
         "dates": dates,
         "generated_utc": pd.Timestamp.now("UTC").isoformat(),
         "source": "DTCC SEC SBSDR cumulative credits (public dissemination)",
-        "scope": "Single-name CDS only (UPI FISN 'CDS Corp/Sov SN'). SEC regime; "
-                 "excludes EMIR-reported EU/UK flow and CFTC index.",
+        "families": FAMILY_LABEL,
+        "scope": "All credit products in the SEC credits file, split by product "
+                 "family. SEC regime only; excludes EMIR-reported EU/UK flow "
+                 "and CFTC-reported index.",
         "baseline_note": "Baseline is mean trades per business day over the "
                          "preceding window, counting days with no trades as zero.",
         "caveats": [
@@ -476,6 +563,8 @@ def export(df: pd.DataFrame, dates: list[str]) -> dict:
             "Earlier dates restate as late cancels and corrections arrive.",
             "Entities identified only by a Markit RED code show as RED-only.",
             "A name with few active days has a thin baseline - check days traded.",
+            "Non-single-name families are thin: a few trades a day, so their "
+            "baselines are noisy by construction.",
         ],
         "totals": totals,
         "entities": entities,
