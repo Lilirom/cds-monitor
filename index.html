@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who traded — single-name CDS</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#E9ECEF; --card:#F4F6F7; --ink:#131A22; --slate:#5B6B7C;
+    --rule:#C3CAD1; --signal:#B06A00; --cold:#2E6E6B; --quiet:#8A97A3;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --sans:'IBM Plex Sans Condensed','Helvetica Neue',sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       padding:22px 16px 60px;-webkit-text-size-adjust:100%}
+  .wrap{max-width:960px;margin:0 auto}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;
+        gap:14px;border-bottom:2px solid var(--ink);padding-bottom:12px}
+  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--slate);
+           text-transform:uppercase}
+  h1{margin:4px 0 0;font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1}
+  .kpis{display:flex;gap:20px;align-items:flex-end}
+  .kpi{font-family:var(--mono);text-align:right}
+  .kpi b{display:block;font-size:26px;font-weight:600;line-height:1}
+  .kpi span{font-size:10px;color:var(--slate);letter-spacing:.1em}
+  .datebar{display:flex;align-items:center;gap:10px;padding:10px 0;
+           border-bottom:1px solid var(--rule);flex-wrap:wrap}
+  button,select,input{font-family:var(--sans);border-radius:2px;border:1px solid var(--rule);
+        background:var(--card);color:var(--ink);padding:5px 9px;font-size:12px}
+  button{cursor:pointer;background:transparent}
+  button:disabled{color:var(--quiet);cursor:default}
+  button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  select#date{font-family:var(--mono);font-weight:500;font-size:13px;border-color:var(--ink)}
+  .tape{display:flex;align-items:flex-end;gap:2px;height:30px;margin-left:4px;
+        overflow-x:auto;max-width:100%}
+  .tape i{width:6px;flex:0 0 6px;background:var(--rule);cursor:pointer;display:block}
+  .tape i.sel{background:var(--signal)}
+  .meta{font-family:var(--mono);font-size:11px;color:var(--slate);margin-left:auto}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  .controls label{font-size:12px;color:var(--slate);display:flex;gap:5px;align-items:center;
+                  cursor:pointer}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:9.5px;
+          color:var(--quiet);letter-spacing:.08em;padding-bottom:6px}
+  .row{border-bottom:1px solid var(--rule);padding:9px 0;cursor:pointer}
+  .row.open{background:var(--card)}
+  .row .top{display:flex;align-items:center;gap:12px}
+  .nm{width:190px;flex-shrink:0}
+  .nm .t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;
+         text-overflow:ellipsis}
+  .nm .t.u{color:var(--quiet)}
+  .nm .s{font-family:var(--mono);font-size:9px;color:var(--quiet);letter-spacing:.06em}
+  .nm .s .cold{color:var(--cold);font-weight:600}
+  .ladder{position:relative;height:18px;flex:1;min-width:70px}
+  .ladder .base{position:absolute;top:8px;left:0;right:0;height:1px;background:var(--rule)}
+  .ladder .bar{position:absolute;top:5px;left:0;height:7px;opacity:.9}
+  .ladder .tick{position:absolute;top:1px;width:1.5px;height:15px;background:var(--ink);
+                opacity:.75}
+  .n{font-family:var(--mono);width:42px;text-align:right;font-size:15px;font-weight:600}
+  .r{font-family:var(--mono);width:50px;text-align:right;font-size:11px;color:var(--slate)}
+  .r.hot{color:var(--signal);font-weight:600}
+  .sp{font-family:var(--mono);width:54px;text-align:right;font-size:11px;color:var(--slate)}
+  .detail{padding-top:8px}
+  .facts{display:flex;gap:20px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+         color:var(--slate)}
+  .chart{padding:12px 0 4px}
+  .chart .hdr{display:flex;gap:14px;font-family:var(--mono);font-size:9.5px;
+              color:var(--quiet);letter-spacing:.08em;margin-bottom:6px;flex-wrap:wrap}
+  .plot{position:relative;height:82px;display:flex;align-items:flex-end;gap:2px}
+  .plot .mean{position:absolute;left:0;right:0;border-top:1px dashed var(--ink);opacity:.55}
+  .plot .col{flex:1;position:relative;height:100%;display:flex;align-items:flex-end}
+  .plot .col em{width:100%;background:var(--slate);opacity:.8;display:block}
+  .plot .col.sel em{background:var(--signal);opacity:1}
+  .plot .col.zero em{background:var(--rule)}
+  .plot .dot{position:absolute;left:50%;transform:translateX(-50%);width:4px;height:4px;
+             border-radius:50%;background:var(--signal)}
+  .xaxis{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;
+         color:var(--quiet);margin-top:3px}
+  .foot{margin-top:26px;padding-top:12px;border-top:1px solid var(--rule);font-size:11px;
+        color:var(--slate);line-height:1.65}
+  .foot .h{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--ink);
+           margin-bottom:5px}
+  .status{padding:40px 0;font-family:var(--mono);font-size:13px;color:var(--slate)}
+  :focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  @media (max-width:620px){
+    .nm{width:130px} .sp{display:none} h1{font-size:24px}
+    .meta{margin-left:0;width:100%}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="eyebrow">DTCC SEC SBSDR · single-name credit</div>
+      <h1>Who traded</h1>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><b id="kTrades">—</b><span>NEW TRADES</span></div>
+      <div class="kpi"><b id="kNames">—</b><span>NAMES</span></div>
+    </div>
+  </div>
+
+  <div class="datebar">
+    <button id="prev" aria-label="Previous day">←</button>
+    <select id="date" aria-label="Select date"></select>
+    <button id="next" aria-label="Next day">→</button>
+    <div class="tape" id="tape"></div>
+    <span class="meta" id="meta"></span>
+  </div>
+
+  <div class="controls">
+    <button data-view="movers" class="on">Movers</button>
+    <button data-view="cold">Woke up</button>
+    <button data-view="busiest">Busiest</button>
+    <select id="sector" aria-label="Sector">
+      <option value="all">All sectors</option>
+      <option value="corporate">Corporate</option>
+      <option value="sovereign">Sovereign</option>
+    </select>
+    <input id="q" placeholder="Find a name" aria-label="Find a name">
+    <label><input type="checkbox" id="unmapped"> RED-only</label>
+  </div>
+
+  <div class="legend">
+    <span>│ TICK = OWN 20D MEAN</span>
+    <span>▨ HATCHED = MOSTLY CAPPED</span>
+    <span>× = COUNT ÷ MEAN · RANKED BY REGULARISED DEVIATION</span>
+    <span>TAP A ROW FOR ITS HISTORY</span>
+  </div>
+
+  <div id="list"><div class="status">Loading activity…</div></div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+"use strict";
+// Served from the same repo as activity.json, so a relative path works and
+// there is no cross-origin call. The query string defeats the Pages CDN cache,
+// which otherwise serves yesterday's file for several minutes after a run.
+var SOURCE = "activity.json?t=" + Date.now();
+var WINDOW = 20;
+var DATA = null;
+var state = { idx: 0, view: "movers", sector: "all", unmapped: false, q: "", open: null };
+
+var $ = function (id) { return document.getElementById(id); };
+var esc = function (s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+};
+var shortDate = function (d) { return d.slice(5).replace("-", "/"); };
+
+/* Baseline: mean over every business day in the window, zeros included. The
+   displayed multiple divides by that mean, but ranking uses a regularised
+   deviation so a name with a 0.05/day baseline cannot post a 20x on one trade. */
+function stats(ent, idx) {
+  var from = Math.max(0, idx - WINDOW), days = idx - from, sum = 0, traded = 0, i, c;
+  for (i = from; i < idx; i++) {
+    c = (ent.s[String(i)] || [0])[0];
+    sum += c;
+    if (c > 0) traded++;
+  }
+  var cell = ent.s[String(idx)];
+  var count = cell ? cell[0] : 0;
+  var mean = days ? sum / days : 0;
+  return {
+    count: count, cell: cell, mean: mean, traded: traded, days: days,
+    z: (count - mean) / Math.sqrt(mean + 0.5),
+    ratio: mean > 0 ? count / mean : null,
+    cold: traded === 0 && count > 0,
+    thin: traded > 0 && traded <= 3
+  };
+}
+
+function ladder(count, mean, hot, cold, capped) {
+  var scale = 40;
+  var w = Math.min(100, (count / scale) * 100);
+  var tick = Math.min(100, (mean / scale) * 100);
+  var col = cold ? "var(--cold)" : hot ? "var(--signal)" : "var(--slate)";
+  var fill = capped > 0.5
+    ? "background:" + col + ";background-image:repeating-linear-gradient(115deg," + col +
+      " 0 3px,rgba(255,255,255,.45) 3px 5px)"
+    : "background:" + col;
+  return '<div class="ladder"><div class="base"></div>' +
+    '<div class="bar" style="width:' + w + '%;' + fill + '"></div>' +
+    (mean > 0 ? '<div class="tick" style="left:' + tick + '%"></div>' : "") +
+    "</div>";
+}
+
+function chart(ent, idx) {
+  var from = Math.max(0, idx - WINDOW), i, c, cell, series = [];
+  for (i = from; i <= idx; i++) {
+    cell = ent.s[String(i)];
+    series.push({ i: i, d: DATA.dates[i], c: cell ? cell[0] : 0, sp: cell ? cell[2] : null });
+  }
+  var max = Math.max.apply(null, series.map(function (s) { return s.c; }).concat([1]));
+  var prior = series.slice(0, -1);
+  var mean = prior.length
+    ? prior.reduce(function (a, b) { return a + b.c; }, 0) / prior.length : 0;
+  var meanTop = 74 - (mean / max) * 74;
+  var hasSp = series.some(function (s) { return s.sp != null; });
+
+  var cols = series.map(function (s) {
+    var h = Math.max(s.c > 0 ? 4 : 1, (s.c / max) * 74);
+    var cls = "col" + (s.i === idx ? " sel" : "") + (s.c === 0 ? " zero" : "");
+    var title = s.d + ": " + s.c + (s.sp != null ? " · " + Math.round(s.sp) + "bp" : "");
+    return '<div class="' + cls + '" title="' + esc(title) + '">' +
+      '<em style="height:' + h + 'px"></em>' +
+      (s.sp != null ? '<span class="dot" style="bottom:' + (h + 3) + 'px"></span>' : "") +
+      "</div>";
+  }).join("");
+
+  return '<div class="chart"><div class="hdr">' +
+    "<span>TRADES PER DAY · " + WINDOW + "D</span>" +
+    '<span style="color:var(--ink)">—— mean ' + mean.toFixed(2) + "</span>" +
+    (hasSp ? '<span style="color:var(--signal)">● spread bp</span>' : "") +
+    '</div><div class="plot"><div class="mean" style="top:' + meanTop + 'px"></div>' +
+    cols + '</div><div class="xaxis"><span>' + shortDate(series[0].d) +
+    "</span><span>" + shortDate(series[series.length - 1].d) + "</span></div></div>";
+}
+
+function rows() {
+  var idx = state.idx;
+  var r = DATA.entities.map(function (e) { return { e: e, st: stats(e, idx) }; })
+    .filter(function (x) { return x.st.count > 0; });
+  if (!state.unmapped) r = r.filter(function (x) { return !x.e.u; });
+  if (state.sector !== "all") r = r.filter(function (x) { return x.e.sec === state.sector; });
+  if (state.q.trim()) {
+    var q = state.q.toLowerCase();
+    r = r.filter(function (x) { return x.e.n.toLowerCase().indexOf(q) !== -1; });
+  }
+  if (state.view === "cold") r = r.filter(function (x) { return x.st.cold; });
+  else if (state.view === "movers") {
+    r = r.filter(function (x) { return !x.st.cold; })
+         .sort(function (a, b) { return b.st.z - a.st.z; });
+  } else r.sort(function (a, b) { return b.st.count - a.st.count; });
+  return r.slice(0, 60);
+}
+
+function render() {
+  var date = DATA.dates[state.idx];
+  var T = DATA.totals[date] || { trades: 0, names: 0, capped: 0, sov: 0, unmapped: 0 };
+  $("kTrades").textContent = T.trades;
+  $("kNames").textContent = T.names;
+  $("meta").textContent = Math.round(T.capped * 100) + "% capped · " + T.sov +
+    " sovereign · " + T.unmapped + " RED-only";
+  $("prev").disabled = state.idx === 0;
+  $("next").disabled = state.idx === DATA.dates.length - 1;
+  $("date").value = String(state.idx);
+
+  var tape = $("tape").children, i;
+  for (i = 0; i < tape.length; i++) tape[i].className = i === state.idx ? "sel" : "";
+
+  var list = rows();
+  if (!list.length) {
+    $("list").innerHTML = '<div class="status">Nothing here for ' + esc(date) +
+      ". Try another date or clear the filters.</div>";
+    return;
+  }
+
+  $("list").innerHTML = list.map(function (x, i) {
+    var e = x.e, st = x.st;
+    var cap = st.cell ? st.cell[1] : 0, sp = st.cell ? st.cell[2] : null;
+    var nf = st.cell && st.cell[4] ? st.cell[4] : null;
+    var isOpen = state.open === i;
+    var sub = (e.sec === "sovereign" ? "SOV" : "CORP") + " · " + e.sen.toUpperCase() +
+      (st.cold ? ' · <span class="cold">WOKE UP</span>' : "") +
+      (st.thin ? " · " + st.traded + "/" + st.days + "D" : "");
+    var detail = isOpen
+      ? '<div class="detail"><div class="facts">' +
+        "<span>mean " + st.mean.toFixed(2) + "/day</span>" +
+        "<span>signal z " + st.z.toFixed(1) + "</span>" +
+        "<span>traded " + st.traded + " of " + st.days + " days</span>" +
+        "<span>" + Math.round(cap * 100) + "% capped</span>" +
+        (nf ? "<span>≥ " + esc(nf[0]) + " " + nf[1] + "m</span>" : "") +
+        (st.cell && st.cell[3] > 0 ? "<span>" + st.cell[3] + " novations</span>" : "") +
+        "</div>" + chart(e, state.idx) + "</div>"
+      : "";
+    return '<div class="row' + (isOpen ? " open" : "") + '" data-i="' + i + '">' +
+      '<div class="top"><div class="nm"><div class="t' + (e.u ? " u" : "") + '">' +
+      esc(e.n) + '</div><div class="s">' + sub + "</div></div>" +
+      ladder(st.count, st.mean, st.z >= 3, st.cold, cap) +
+      '<div class="n">' + st.count + "</div>" +
+      '<div class="r' + (st.z >= 3 ? " hot" : "") + '">' +
+      (st.cold ? "new" : st.ratio ? st.ratio.toFixed(1) + "×" : "—") + "</div>" +
+      '<div class="sp">' + (sp ? Math.round(sp) + "bp" : "") + "</div></div>" +
+      detail + "</div>";
+  }).join("");
+}
+
+function boot(d) {
+  DATA = d;
+  state.idx = DATA.dates.length - 1;
+
+  $("date").innerHTML = DATA.dates.map(function (x, i) {
+    return '<option value="' + i + '">' + esc(x) + " · " +
+      ((DATA.totals[x] || {}).trades || 0) + " trades</option>";
+  }).join("");
+
+  var mx = Math.max.apply(null, DATA.dates.map(function (x) {
+    return (DATA.totals[x] || {}).trades || 0;
+  }).concat([1]));
+  $("tape").innerHTML = DATA.dates.map(function (x, i) {
+    var v = (DATA.totals[x] || {}).trades || 0;
+    return '<i data-i="' + i + '" title="' + esc(x + ": " + v) + '" style="height:' +
+      Math.max(10, (v / mx) * 100) + '%"></i>';
+  }).join("");
+
+  $("foot").innerHTML = '<div class="h">READ THIS BEFORE QUOTING ANY FIGURE</div>' +
+    DATA.caveats.map(function (c) { return "<div>— " + esc(c) + "</div>"; }).join("") +
+    '<div style="margin-top:6px">' + esc(DATA.baseline_note) + "</div>" +
+    '<div style="margin-top:4px">' + esc(DATA.scope) + "</div>" +
+    '<div style="margin-top:6px">Updated ' + esc((DATA.generated_utc || "").slice(0, 16)) +
+    " UTC</div>";
+
+  var go = function (i) {
+    state.idx = Math.min(DATA.dates.length - 1, Math.max(0, i));
+    state.open = null;
+    render();
+  };
+  $("prev").onclick = function () { go(state.idx - 1); };
+  $("next").onclick = function () { go(state.idx + 1); };
+  $("date").onchange = function (e) { go(+e.target.value); };
+  $("tape").onclick = function (e) {
+    if (e.target.dataset.i !== undefined) go(+e.target.dataset.i);
+  };
+  document.querySelectorAll("[data-view]").forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll("[data-view]").forEach(function (x) {
+        x.classList.remove("on");
+      });
+      b.classList.add("on");
+      state.view = b.dataset.view;
+      state.open = null;
+      render();
+    };
+  });
+  $("sector").onchange = function (e) { state.sector = e.target.value; state.open = null; render(); };
+  $("q").oninput = function (e) { state.q = e.target.value; state.open = null; render(); };
+  $("unmapped").onchange = function (e) { state.unmapped = e.target.checked; render(); };
+  $("list").onclick = function (e) {
+    var row = e.target.closest(".row");
+    if (!row) return;
+    var i = +row.dataset.i;
+    state.open = state.open === i ? null : i;
+    render();
+  };
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "ArrowLeft") go(state.idx - 1);
+    if (e.key === "ArrowRight") go(state.idx + 1);
+  });
+
+  render();
+}
+
+fetch(SOURCE)
+  .then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  })
+  .then(boot)
+  .catch(function (err) {
+    $("list").innerHTML = '<div class="status">Could not load activity.json (' +
+      esc(err.message) + ').<br><br>If the pipeline has not run yet, open the ' +
+      "Actions tab and run <b>Update CDS activity</b> once by hand.</div>";
+  });
+</script>
+</body>
+</html>
