@@ -65,6 +65,27 @@ Add the Pages URL to your phone's home screen and it behaves like an app.
 
 ---
 
+## Product families
+
+The credits file is not only single-name CDS. The tabs split it by UPI FISN:
+
+| Tab | What it is | Typical volume |
+|---|---|---|
+| Single name | Corporate and sovereign single-name CDS | ~400-600/day |
+| Structured ref | CDS referencing ABS, CMBS, tranches | bursty: 0 most days, 100+ on unwinds |
+| Baskets & CLO | Bespoke baskets, loan/CLO warehouse portfolios | a few a week |
+| Total return | TRS on credit, often loan exposure | ~3/day |
+| Index | CDX (the few that land in this file) | rare |
+| Other credit | Credit swaps on private debt, Term Loan B references | ~6/day |
+
+Everything outside single name is thin. A 20x on one trade means nothing there; the tab
+carries a warning for that reason. The families are still worth watching as event
+detectors: a 97-trade day in Structured ref on 29 June was a portfolio unwind across
+Ameriquest and BBCMS deals, invisible if you only look at single names.
+
+A handful of rate swaps land in the credits file each month, presumably mis-tagged at
+source. Those are dropped, not shown.
+
 ## Reading the numbers
 
 **The count** is new single-name trades reported to the SEC repository for that day, after
@@ -99,6 +120,10 @@ go to the CFTC repositories, not this file.
 
 **Not stable history.** Earlier days restate as late cancels and corrections arrive, which
 is why the pipeline reprocesses a rolling window rather than appending.
+
+**Structured references often have no issuer.** A CDS on a CMBS deal references the deal,
+not a company. Those rows show their identifier in brackets and sit behind the RED-only
+toggle.
 
 **Names are imperfect.** Entities identified only by a Markit RED code cannot be resolved
 without a RED licence; they appear as `RED/ISIN …` behind the RED-only toggle. A few

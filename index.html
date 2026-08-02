@@ -38,7 +38,14 @@
   .tape i{width:6px;flex:0 0 6px;background:var(--rule);cursor:pointer;display:block}
   .tape i.sel{background:var(--signal)}
   .meta{font-family:var(--mono);font-size:11px;color:var(--slate);margin-left:auto}
-  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  .famtabs{display:flex;gap:0;flex-wrap:wrap;margin:14px 0 0;border-bottom:1px solid var(--rule)}
+  .famtabs button{border:0;border-bottom:2px solid transparent;background:none;padding:6px 12px 7px;
+        font-size:12.5px;color:var(--slate);border-radius:0;margin-bottom:-1px}
+  .famtabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+  .famtabs button b{font-family:var(--mono);font-weight:400;font-size:10px;color:var(--quiet);
+        margin-left:5px}
+  .famtabs button.on b{color:var(--signal)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0 0}
   .controls label{font-size:12px;color:var(--slate);display:flex;gap:5px;align-items:center;
                   cursor:pointer}
   .legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:9.5px;
@@ -111,6 +118,8 @@
     <span class="meta" id="meta"></span>
   </div>
 
+  <div class="famtabs" id="famtabs"></div>
+
   <div class="controls">
     <button data-view="movers" class="on">Movers</button>
     <button data-view="cold">Woke up</button>
@@ -129,6 +138,7 @@
     <span>▨ HATCHED = MOSTLY CAPPED</span>
     <span>× = COUNT ÷ MEAN · RANKED BY REGULARISED DEVIATION</span>
     <span>TAP A ROW FOR ITS HISTORY</span>
+    <span id="famnote"></span>
   </div>
 
   <div id="list"><div class="status">Loading activity…</div></div>
@@ -144,7 +154,8 @@
 var SOURCE = "activity.json?t=" + Date.now();
 var WINDOW = 20;
 var DATA = null;
-var state = { idx: 0, view: "movers", sector: "all", unmapped: false, q: "", open: null };
+var state = { idx: 0, view: "movers", family: "single_name", sector: "all",
+              unmapped: false, q: "", open: null };
 
 var $ = function (id) { return document.getElementById(id); };
 var esc = function (s) {
@@ -227,8 +238,11 @@ function rows() {
   var idx = state.idx;
   var r = DATA.entities.map(function (e) { return { e: e, st: stats(e, idx) }; })
     .filter(function (x) { return x.st.count > 0; });
+  r = r.filter(function (x) { return x.e.f === state.family; });
   if (!state.unmapped) r = r.filter(function (x) { return !x.e.u; });
-  if (state.sector !== "all") r = r.filter(function (x) { return x.e.sec === state.sector; });
+  if (state.family === "single_name" && state.sector !== "all") {
+    r = r.filter(function (x) { return x.e.sec === state.sector; });
+  }
   if (state.q.trim()) {
     var q = state.q.toLowerCase();
     r = r.filter(function (x) { return x.e.n.toLowerCase().indexOf(q) !== -1; });
@@ -241,7 +255,31 @@ function rows() {
   return r.slice(0, 60);
 }
 
+function renderFamTabs() {
+  var date = DATA.dates[state.idx];
+  var fam = ((DATA.totals[date] || {}).fam) || {};
+  var order = ["single_name", "structured", "trs", "basket", "index", "other_credit"];
+  $("famtabs").innerHTML = order.filter(function (k) {
+    // Hide a family with no history at all, but keep it visible on a zero day
+    // so the tab set does not jump around as you step through dates.
+    return DATA.entities.some(function (e) { return e.f === k; });
+  }).map(function (k) {
+    var n = fam[k] || 0;
+    return '<button data-fam="' + k + '"' + (state.family === k ? ' class="on"' : "") +
+      ">" + esc(DATA.families[k] || k) + "<b>" + n + "</b></button>";
+  }).join("");
+  $("famtabs").querySelectorAll("[data-fam]").forEach(function (b) {
+    b.onclick = function () {
+      state.family = b.dataset.fam;
+      state.open = null;
+      render();
+    };
+  });
+  $("sector").style.display = state.family === "single_name" ? "" : "none";
+}
+
 function render() {
+  renderFamTabs();
   var date = DATA.dates[state.idx];
   var T = DATA.totals[date] || { trades: 0, names: 0, capped: 0, sov: 0, unmapped: 0 };
   $("kTrades").textContent = T.trades;
@@ -255,6 +293,8 @@ function render() {
   var tape = $("tape").children, i;
   for (i = 0; i < tape.length; i++) tape[i].className = i === state.idx ? "sel" : "";
 
+  $("famnote").textContent = state.family === "single_name" ? ""
+    : "THIN FAMILY - BASELINES ARE NOISY";
   var list = rows();
   if (!list.length) {
     $("list").innerHTML = '<div class="status">Nothing here for ' + esc(date) +
